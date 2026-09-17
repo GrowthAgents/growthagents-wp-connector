@@ -3,7 +3,7 @@
  * Plugin Name:       GrowthAgents Connector
  * Plugin URI:        https://growthagents.ai
  * Description:       Connects this WordPress site to GrowthAgents so it can publish through a dedicated, revocable connection instead of a shared application password.
- * Version:           0.1.0
+ * Version:           0.1.1
  * Requires at least: 5.6
  * Requires PHP:      7.4
  * Author:            GrowthAgents
@@ -20,7 +20,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit; // Direct access is not allowed.
 }
 
-define( 'GROWTHAGENTS_CONNECTOR_VERSION', '0.1.0' );
+define( 'GROWTHAGENTS_CONNECTOR_VERSION', '0.1.1' );
 define( 'GROWTHAGENTS_CONNECTOR_PAIR_URL', 'https://app.growthagents.ai/api/wordpress/pair' );
 define( 'GROWTHAGENTS_CONNECTOR_TOKEN_OPTION', 'growthagents_connector_token' );
 define( 'GROWTHAGENTS_CONNECTOR_USER_ID_OPTION', 'growthagents_connector_user_id' );
@@ -174,8 +174,18 @@ function growthagents_connector_handle_connect() {
 	}
 
 	// Never logged, never echoed — only ever sent over HTTPS to the pairing
-	// endpoint and, on success, written to this site's own options table.
+	// endpoint and written to this site's own options table.
 	$token = wp_generate_password( 64, false );
+
+	// Store BEFORE calling GA, not after. GA's pairing endpoint probes this
+	// site's REST API with the token as part of handling the request below —
+	// determine_current_user has to find it already stored, or every pairing
+	// deadlocks: GA can never get the 200 that this plugin was waiting for
+	// before it would store the token in the first place. Any failure path
+	// below rolls this back with delete_option() — a live token GA doesn't
+	// know about, sitting in wp_options, is worse than no token at all.
+	update_option( GROWTHAGENTS_CONNECTOR_TOKEN_OPTION, $token );
+	update_option( GROWTHAGENTS_CONNECTOR_USER_ID_OPTION, $user_id );
 
 	$response = wp_remote_post(
 		GROWTHAGENTS_CONNECTOR_PAIR_URL,
@@ -193,6 +203,7 @@ function growthagents_connector_handle_connect() {
 	);
 
 	if ( is_wp_error( $response ) ) {
+		growthagents_connector_rollback_pairing();
 		growthagents_connector_set_notice( 'error', $response->get_error_message() );
 		wp_safe_redirect( growthagents_connector_settings_url() );
 		exit;
@@ -201,24 +212,31 @@ function growthagents_connector_handle_connect() {
 	$status = wp_remote_retrieve_response_code( $response );
 
 	if ( 200 === (int) $status ) {
-		update_option( GROWTHAGENTS_CONNECTOR_TOKEN_OPTION, $token );
-		update_option( GROWTHAGENTS_CONNECTOR_USER_ID_OPTION, $user_id );
 		growthagents_connector_set_notice( 'success', __( 'Connected to GrowthAgents.', 'growthagents-connector' ) );
 		wp_safe_redirect( growthagents_connector_settings_url() );
 		exit;
 	}
 
-	// Non-200: show the API's own error message verbatim. Store nothing —
-	// the user account created/found above is idempotent and left in place,
-	// but no token or user id is persisted, so this site stays disconnected.
+	// Non-200: roll back the token this site was holding for GA — it never
+	// confirmed pairing, so nothing should authenticate as growthagents from
+	// here on — and show the API's own error message verbatim. The user
+	// account created/found above is idempotent and left in place; only the
+	// token and user-id options are rolled back.
 	$body    = json_decode( wp_remote_retrieve_body( $response ), true );
 	$message = ( is_array( $body ) && ! empty( $body['error'] ) )
 		? $body['error']
 		: __( 'Pairing failed.', 'growthagents-connector' );
 
+	growthagents_connector_rollback_pairing();
 	growthagents_connector_set_notice( 'error', $message );
 	wp_safe_redirect( growthagents_connector_settings_url() );
 	exit;
+}
+
+/** Undo the store-before-probe write on any non-200/error outcome. */
+function growthagents_connector_rollback_pairing() {
+	delete_option( GROWTHAGENTS_CONNECTOR_TOKEN_OPTION );
+	delete_option( GROWTHAGENTS_CONNECTOR_USER_ID_OPTION );
 }
 
 /**
