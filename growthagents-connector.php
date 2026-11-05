@@ -376,6 +376,10 @@ function growthagents_connector_seo_meta_keys() {
  */
 function growthagents_connector_sanitize_seo_text( $value ) {
 	$value = wp_check_invalid_utf8( (string) $value );
+	if ( false !== strpos( $value, '<' ) ) {
+		// Same as core: escape a lone "<" first, or strip_tags eats the rest of the text.
+		$value = wp_pre_kses_less_than( $value );
+	}
 	$value = wp_strip_all_tags( $value );
 	$value = preg_replace( '/[\r\n\t ]+/', ' ', $value );
 	return trim( $value );
