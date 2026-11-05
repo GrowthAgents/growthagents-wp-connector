@@ -379,7 +379,14 @@ function growthagents_connector_register_seo_meta() {
 	unset( $post_types['attachment'], $post_types['wp_block'], $post_types['wp_template'], $post_types['wp_template_part'], $post_types['wp_navigation'] );
 
 	foreach ( $post_types as $post_type ) {
+		// Core only exposes the REST `meta` field on post types that support
+		// custom-fields; a REST-enabled CPT without it would drop these writes.
+		if ( ! post_type_supports( $post_type, 'custom-fields' ) ) {
+			add_post_type_support( $post_type, 'custom-fields' );
+		}
 		foreach ( $keys as $key ) {
+			// Canonicals are URLs: sanitize_text_field strips %XX octets.
+			$is_url = false !== strpos( $key, 'canonical' );
 			register_post_meta(
 				$post_type,
 				$key,
@@ -387,7 +394,7 @@ function growthagents_connector_register_seo_meta() {
 					'type'              => 'string',
 					'single'            => true,
 					'show_in_rest'      => true,
-					'sanitize_callback' => 'sanitize_text_field',
+					'sanitize_callback' => $is_url ? 'esc_url_raw' : 'sanitize_text_field',
 					'auth_callback'     => function ( $allowed, $meta_key, $object_id ) {
 						return current_user_can( 'edit_post', $object_id );
 					},
