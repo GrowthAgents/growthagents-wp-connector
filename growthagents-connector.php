@@ -369,6 +369,18 @@ function growthagents_connector_seo_meta_keys() {
 	return $keys;
 }
 
+/**
+ * sanitize_text_field minus its %XX-octet stripping. That stripping turns
+ * Rank Math / Yoast variables like %category% or %sep% into garbage, and this
+ * callback also runs for the editor's own metabox saves, not only REST.
+ */
+function growthagents_connector_sanitize_seo_text( $value ) {
+	$value = wp_check_invalid_utf8( (string) $value );
+	$value = wp_strip_all_tags( $value );
+	$value = preg_replace( '/[\r\n\t ]+/', ' ', $value );
+	return trim( $value );
+}
+
 function growthagents_connector_register_seo_meta() {
 	$keys = growthagents_connector_seo_meta_keys();
 	if ( empty( $keys ) ) {
@@ -394,7 +406,7 @@ function growthagents_connector_register_seo_meta() {
 					'type'              => 'string',
 					'single'            => true,
 					'show_in_rest'      => true,
-					'sanitize_callback' => $is_url ? 'esc_url_raw' : 'sanitize_text_field',
+					'sanitize_callback' => $is_url ? 'esc_url_raw' : 'growthagents_connector_sanitize_seo_text',
 					'auth_callback'     => function ( $allowed, $meta_key, $object_id ) {
 						return current_user_can( 'edit_post', $object_id );
 					},
