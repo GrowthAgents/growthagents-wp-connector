@@ -3,7 +3,7 @@
  * Plugin Name:       GrowthAgents Connector
  * Plugin URI:        https://growthagents.ai
  * Description:       Connects this WordPress site to GrowthAgents so it can publish through a dedicated, revocable connection instead of a shared application password.
- * Version:           0.1.1
+ * Version:           0.1.2
  * Requires at least: 5.6
  * Requires PHP:      7.4
  * Author:            GrowthAgents
@@ -20,8 +20,15 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit; // Direct access is not allowed.
 }
 
-define( 'GROWTHAGENTS_CONNECTOR_VERSION', '0.1.1' );
-define( 'GROWTHAGENTS_CONNECTOR_PAIR_URL', 'https://app.growthagents.ai/api/wordpress/pair' );
+define( 'GROWTHAGENTS_CONNECTOR_VERSION', '0.1.2' );
+// Production by default. A site paired with a non-production GrowthAgents
+// environment (staging testing) overrides this in wp-config.php, above the
+// "That's all, stop editing!" line:
+//   define( 'GROWTHAGENTS_CONNECTOR_PAIR_URL', 'https://staging.growthagents.ai/api/wordpress/pair' );
+// A pairing code only redeems on the environment that issued it.
+if ( ! defined( 'GROWTHAGENTS_CONNECTOR_PAIR_URL' ) ) {
+	define( 'GROWTHAGENTS_CONNECTOR_PAIR_URL', 'https://app.growthagents.ai/api/wordpress/pair' );
+}
 define( 'GROWTHAGENTS_CONNECTOR_TOKEN_OPTION', 'growthagents_connector_token' );
 define( 'GROWTHAGENTS_CONNECTOR_USER_ID_OPTION', 'growthagents_connector_user_id' );
 
