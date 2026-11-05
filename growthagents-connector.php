@@ -3,7 +3,7 @@
  * Plugin Name:       GrowthAgents Connector
  * Plugin URI:        https://growthagents.ai
  * Description:       Connects this WordPress site to GrowthAgents so it can publish through a dedicated, revocable connection instead of a shared application password.
- * Version:           0.1.2
+ * Version:           0.1.3
  * Requires at least: 5.6
  * Requires PHP:      7.4
  * Author:            GrowthAgents
@@ -20,7 +20,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit; // Direct access is not allowed.
 }
 
-define( 'GROWTHAGENTS_CONNECTOR_VERSION', '0.1.2' );
+define( 'GROWTHAGENTS_CONNECTOR_VERSION', '0.1.3' );
 // Production by default. A site paired with a non-production GrowthAgents
 // environment (staging testing) overrides this in wp-config.php, above the
 // "That's all, stop editing!" line:
@@ -340,4 +340,82 @@ function growthagents_connector_authenticate( $user_id ) {
 	}
 
 	return (int) $stored_user_id;
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * SEO meta over REST: Rank Math and Yoast store the page title, meta
+ * description and canonical as post meta, but neither registers those keys
+ * with show_in_rest, so a core /wp/v2/* write silently drops them (found on
+ * intgr8.me, 2026-11-05: rank_math_description did not persist). Register
+ * them here so GrowthAgents can write them through core REST.
+ *
+ * Only the keys GrowthAgents writes. Writes are allowed only for a user who
+ * can edit that post — the same check core applies to the post itself.
+ * Registered only when the matching SEO plugin is active.
+ * ---------------------------------------------------------------------------
+ */
+
+add_action( 'init', 'growthagents_connector_register_seo_meta', 99 );
+
+function growthagents_connector_seo_meta_keys() {
+	$keys = array();
+	if ( defined( 'RANK_MATH_VERSION' ) || class_exists( 'RankMath' ) ) {
+		$keys = array_merge( $keys, array( 'rank_math_title', 'rank_math_description', 'rank_math_canonical_url' ) );
+	}
+	if ( defined( 'WPSEO_VERSION' ) ) {
+		$keys = array_merge( $keys, array( '_yoast_wpseo_title', '_yoast_wpseo_metadesc', '_yoast_wpseo_canonical' ) );
+	}
+	return $keys;
+}
+
+/**
+ * sanitize_text_field minus its %XX-octet stripping. That stripping turns
+ * Rank Math / Yoast variables like %category% or %sep% into garbage, and this
+ * callback also runs for the editor's own metabox saves, not only REST.
+ */
+function growthagents_connector_sanitize_seo_text( $value ) {
+	$value = wp_check_invalid_utf8( (string) $value );
+	if ( false !== strpos( $value, '<' ) ) {
+		// Same as core: escape a lone "<" first, or strip_tags eats the rest of the text.
+		$value = wp_pre_kses_less_than( $value );
+	}
+	$value = wp_strip_all_tags( $value );
+	$value = preg_replace( '/[\r\n\t ]+/', ' ', $value );
+	return trim( $value );
+}
+
+function growthagents_connector_register_seo_meta() {
+	$keys = growthagents_connector_seo_meta_keys();
+	if ( empty( $keys ) ) {
+		return;
+	}
+
+	$post_types = get_post_types( array( 'show_in_rest' => true ), 'names' );
+	unset( $post_types['attachment'], $post_types['wp_block'], $post_types['wp_template'], $post_types['wp_template_part'], $post_types['wp_navigation'] );
+
+	foreach ( $post_types as $post_type ) {
+		// Core only exposes the REST `meta` field on post types that support
+		// custom-fields; a REST-enabled CPT without it would drop these writes.
+		if ( ! post_type_supports( $post_type, 'custom-fields' ) ) {
+			add_post_type_support( $post_type, 'custom-fields' );
+		}
+		foreach ( $keys as $key ) {
+			// Canonicals are URLs: sanitize_text_field strips %XX octets.
+			$is_url = false !== strpos( $key, 'canonical' );
+			register_post_meta(
+				$post_type,
+				$key,
+				array(
+					'type'              => 'string',
+					'single'            => true,
+					'show_in_rest'      => true,
+					'sanitize_callback' => $is_url ? 'esc_url_raw' : 'growthagents_connector_sanitize_seo_text',
+					'auth_callback'     => function ( $allowed, $meta_key, $object_id ) {
+						return current_user_can( 'edit_post', $object_id );
+					},
+				)
+			);
+		}
+	}
 }
