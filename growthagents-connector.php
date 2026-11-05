@@ -3,7 +3,7 @@
  * Plugin Name:       GrowthAgents Connector
  * Plugin URI:        https://growthagents.ai
  * Description:       Connects this WordPress site to GrowthAgents so it can publish through a dedicated, revocable connection instead of a shared application password.
- * Version:           0.1.2
+ * Version:           0.1.3
  * Requires at least: 5.6
  * Requires PHP:      7.4
  * Author:            GrowthAgents
@@ -20,7 +20,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit; // Direct access is not allowed.
 }
 
-define( 'GROWTHAGENTS_CONNECTOR_VERSION', '0.1.2' );
+define( 'GROWTHAGENTS_CONNECTOR_VERSION', '0.1.3' );
 // Production by default. A site paired with a non-production GrowthAgents
 // environment (staging testing) overrides this in wp-config.php, above the
 // "That's all, stop editing!" line:
@@ -340,4 +340,59 @@ function growthagents_connector_authenticate( $user_id ) {
 	}
 
 	return (int) $stored_user_id;
+}
+
+/**
+ * ---------------------------------------------------------------------------
+ * SEO meta over REST: Rank Math and Yoast store the page title, meta
+ * description and canonical as post meta, but neither registers those keys
+ * with show_in_rest, so a core /wp/v2/* write silently drops them (found on
+ * intgr8.me, 2026-11-05: rank_math_description did not persist). Register
+ * them here so GrowthAgents can write them through core REST.
+ *
+ * Only the keys GrowthAgents writes. Writes are allowed only for a user who
+ * can edit that post — the same check core applies to the post itself.
+ * Registered only when the matching SEO plugin is active.
+ * ---------------------------------------------------------------------------
+ */
+
+add_action( 'init', 'growthagents_connector_register_seo_meta', 99 );
+
+function growthagents_connector_seo_meta_keys() {
+	$keys = array();
+	if ( defined( 'RANK_MATH_VERSION' ) || class_exists( 'RankMath' ) ) {
+		$keys = array_merge( $keys, array( 'rank_math_title', 'rank_math_description', 'rank_math_canonical_url' ) );
+	}
+	if ( defined( 'WPSEO_VERSION' ) ) {
+		$keys = array_merge( $keys, array( '_yoast_wpseo_title', '_yoast_wpseo_metadesc', '_yoast_wpseo_canonical' ) );
+	}
+	return $keys;
+}
+
+function growthagents_connector_register_seo_meta() {
+	$keys = growthagents_connector_seo_meta_keys();
+	if ( empty( $keys ) ) {
+		return;
+	}
+
+	$post_types = get_post_types( array( 'show_in_rest' => true ), 'names' );
+	unset( $post_types['attachment'], $post_types['wp_block'], $post_types['wp_template'], $post_types['wp_template_part'], $post_types['wp_navigation'] );
+
+	foreach ( $post_types as $post_type ) {
+		foreach ( $keys as $key ) {
+			register_post_meta(
+				$post_type,
+				$key,
+				array(
+					'type'              => 'string',
+					'single'            => true,
+					'show_in_rest'      => true,
+					'sanitize_callback' => 'sanitize_text_field',
+					'auth_callback'     => function ( $allowed, $meta_key, $object_id ) {
+						return current_user_can( 'edit_post', $object_id );
+					},
+				)
+			);
+		}
+	}
 }
